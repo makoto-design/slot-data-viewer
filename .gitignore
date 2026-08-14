@@ -16,6 +16,8 @@ android/*.png
 *.db
 *.db.bak*
 
+/.claude/
+
 # ─── エディタ / OS ───
 .idea/
 .vscode/

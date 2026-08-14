@@ -7,6 +7,7 @@
 *.json -text
 docs/vendor/*.js -text
 
+*.bin binary
 *.png binary
 *.webp binary
 *.db binary

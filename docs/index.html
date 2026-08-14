@@ -73,6 +73,17 @@ canvas { max-height: 500px; }
 .err { background: #fdecea; border: 1px solid #f5c6cb; color: #a33; padding: 10px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; display: none; }
 .err.on { display: block; }
 
+/* パスワード入力 */
+.gate { position: fixed; inset: 0; background: #f5f5f5; z-index: 1000; display: none; align-items: center; justify-content: center; padding: 20px; }
+.gate.on { display: flex; }
+.gate-box { background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); padding: 28px 24px; width: 100%; max-width: 360px; text-align: center; }
+.gate-box h2 { font-size: 16px; margin-bottom: 6px; color: #333; }
+.gate-box p { font-size: 12px; color: #888; margin-bottom: 16px; }
+.gate-box input { width: 100%; padding: 10px 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 12px; }
+.gate-box button { width: 100%; padding: 10px; font-size: 15px; background: #c0392b; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+.gate-box button:disabled { background: #bbb; cursor: default; }
+.gate-msg { font-size: 12px; color: #c0392b; margin-top: 10px; min-height: 16px; }
+
 @media (max-width: 720px) {
   body { font-size: 14px; }
 
@@ -191,6 +202,16 @@ canvas { max-height: 500px; }
 </head>
 <body>
 
+<div class="gate" id="gate">
+  <div class="gate-box">
+    <h2>パスワード</h2>
+    <p>閲覧にはパスワードが必要です</p>
+    <input type="password" id="gatePw" autocomplete="current-password" enterkeyhint="go">
+    <button id="gateBtn">開く</button>
+    <div class="gate-msg" id="gateMsg"></div>
+  </div>
+</div>
+
 <div class="busy" id="busy">読み込み中…</div>
 
 <div class="header">
@@ -261,8 +282,11 @@ canvas { max-height: 500px; }
 //  State
 // ═══════════════════════════════════════
 const DATA_ROOT = './data';
+const PW_STORAGE_KEY = 'viewer_pw';
 
-let ROOT = null;          // data/index.json
+let META = null;          // data/meta.json（平文。鍵の作り方だけが書いてある）
+let KEY = null;           // パスワードから作った AES-GCM の鍵
+let ROOT = null;          // data/index.bin
 let STORE = null;         // data/<id>/index.json（選択中の店舗）
 let SUMMARY = [];         // STORE.daily を扱いやすい形に変換したもの
 let ROWS = [];            // 読み込み済みの月の台別データ（選択中の店舗ぶんのみ）
@@ -304,21 +328,56 @@ function showError(msg) {
   el.classList.toggle('on', !!msg);
 }
 
+// ─── パスワードと復号 ───
+// データは meta.json 以外すべて AES-GCM で暗号化してある。パスワードから
+// PBKDF2 で鍵を作り、ブラウザ側で復号する。ファイルの先頭12バイトが nonce。
+
+const b64ToBytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function deriveKey(password) {
+  const kdf = META.kdf;
+  const base = await crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: b64ToBytes(kdf.salt), iterations: kdf.iterations, hash: kdf.hash },
+    base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+}
+
+async function decryptBytes(key, buf) {
+  const bytes = new Uint8Array(buf);
+  return crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: bytes.slice(0, 12) }, key, bytes.slice(12));
+}
+
+/** パスワードが正しければ KEY を差し替えて true */
+async function unlock(password) {
+  try {
+    const key = await deriveKey(password);
+    const ok = await decryptBytes(key, b64ToBytes(META.verify).buffer);
+    if (new TextDecoder().decode(ok) !== 'ok') return false;
+    KEY = key;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function fetchJson(path, bust) {
   const url = `${DATA_ROOT}/${path}?v=${encodeURIComponent(bust)}`;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`${path} を取得できません (HTTP ${resp.status})`);
-  return resp.json();
+  const plain = await decryptBytes(KEY, await resp.arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(plain));
 }
 
 async function loadRoot() {
-  ROOT = await fetchJson('index.json', Date.now());
+  ROOT = await fetchJson('index.bin', Date.now());
   if (!ROOT.stores || !ROOT.stores.length) throw new Error('データがまだありません。');
 }
 
 async function loadStoreIndex(id) {
   if (!storeIndexCache.has(id)) {
-    storeIndexCache.set(id, await fetchJson(`${id}/index.json`, ROOT.exported_at));
+    storeIndexCache.set(id, await fetchJson(`${id}/index.bin`, ROOT.exported_at));
   }
   const s = storeIndexCache.get(id);
   SUMMARY = s.daily.map(([date, total_diff, avg_payout, machine_count]) =>
@@ -329,7 +388,7 @@ async function loadStoreIndex(id) {
 async function loadMonth(id, month) {
   const key = `${id}/${month}`;
   if (!monthCache.has(key)) {
-    const m = await fetchJson(`${id}/${month}.json`, ROOT.exported_at);
+    const m = await fetchJson(`${id}/${month}.bin`, ROOT.exported_at);
     monthCache.set(key, m.rows.map(([di, mi, machine_no, diff_medals, game_count, payout_rate]) =>
       ({ date: m.dates[di], model: m.models[mi], machine_no, diff_medals, game_count, payout_rate })));
   }
@@ -366,14 +425,73 @@ async function refresh() {
   render();
 }
 
-async function loadData() {
+// ═══════════════════════════════════════
+//  起動（パスワード確認 → データ読み込み）
+// ═══════════════════════════════════════
+async function start() {
   try {
     await loadRoot();
     initApp();
   } catch (e) {
     document.getElementById('loading').textContent = 'エラー: ' + e.message
-      + '\n（オフラインの場合はネットワーク接続を確認してください）';
+      + '（オフラインの場合はネットワーク接続を確認してください）';
   }
+}
+
+function showGate(message) {
+  const gate = document.getElementById('gate');
+  const input = document.getElementById('gatePw');
+  const btn = document.getElementById('gateBtn');
+  const msg = document.getElementById('gateMsg');
+  gate.classList.add('on');
+  msg.textContent = message || '';
+  input.focus();
+
+  const submit = async () => {
+    const pw = input.value;
+    if (!pw) return;
+    btn.disabled = true;
+    msg.textContent = '確認中…';
+    // 鍵を作るのに少し時間がかかるので、先に画面を描き替えさせる
+    await new Promise(r => setTimeout(r, 0));
+    if (await unlock(pw)) {
+      try { localStorage.setItem(PW_STORAGE_KEY, pw); } catch (e) { /* 保存できなくても続行 */ }
+      gate.classList.remove('on');
+      start();
+    } else {
+      btn.disabled = false;
+      msg.textContent = 'パスワードが違います';
+      input.select();
+    }
+  };
+  btn.onclick = submit;
+  input.onkeydown = e => { if (e.key === 'Enter') submit(); };
+}
+
+async function loadData() {
+  if (!window.crypto || !crypto.subtle) {
+    document.getElementById('loading').textContent =
+      'この環境では表示できません（暗号機能が使えないため、https でアクセスしてください）';
+    return;
+  }
+  try {
+    const resp = await fetch(`${DATA_ROOT}/meta.json?t=${Date.now()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    META = await resp.json();
+  } catch (e) {
+    document.getElementById('loading').textContent =
+      'データを取得できませんでした（ネットワーク接続を確認してください）';
+    return;
+  }
+
+  let saved = null;
+  try { saved = localStorage.getItem(PW_STORAGE_KEY); } catch (e) { /* 参照できない環境 */ }
+  if (saved && await unlock(saved)) {
+    start();
+    return;
+  }
+  document.getElementById('loading').textContent = '';
+  showGate(saved ? 'パスワードが変更されています。入れ直してください。' : '');
 }
 
 async function reloadAll() {
@@ -381,6 +499,18 @@ async function reloadAll() {
   try {
     storeIndexCache.clear();
     monthCache.clear();
+    // パスワードが変わっていることがあるので鍵の情報も取り直す
+    const resp = await fetch(`${DATA_ROOT}/meta.json?t=${Date.now()}`);
+    if (resp.ok) {
+      META = await resp.json();
+      let saved = null;
+      try { saved = localStorage.getItem(PW_STORAGE_KEY); } catch (e) { /* 参照できない環境 */ }
+      if (!saved || !await unlock(saved)) {
+        setBusy(false);
+        showGate('パスワードが変更されています。入れ直してください。');
+        return;
+      }
+    }
     await loadRoot();
     STORE = await loadStoreIndex(currentStore);
     showError('');
