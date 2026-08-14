@@ -1,0 +1,23 @@
+# ─── Android ───
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+android/*.iml
+android/.idea/
+android/*.png
+
+# ─── このリポジトリの対象外 ───
+/hanabi/
+/hanabi_sim/
+/_old/
+*.db
+*.db.bak*
+
+# ─── エディタ / OS ───
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini

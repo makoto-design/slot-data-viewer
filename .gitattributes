@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Windows の cmd.exe から実行するので CRLF 固定（中身は Shift-JIS）
+*.bat text eol=crlf working-tree-encoding=CP932
+
+# 差分が出ないよう改行を触らない
+*.json -text
+docs/vendor/*.js -text
+
+*.png binary
+*.webp binary
+*.db binary
+gradlew text eol=lf

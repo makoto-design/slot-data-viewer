@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>スロットデータ ビューア</title>
+<script src="./vendor/chart.umd.min.js"></script>
+<script src="./vendor/chartjs-plugin-annotation.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Yu Gothic UI', sans-serif; background: #f5f5f5; color: #333; }
+
+.header { background: #c0392b; color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 18px; }
+.header .info { font-size: 13px; opacity: 0.85; }
+
+.toolbar { background: #fff; padding: 10px 20px; border-bottom: 1px solid #ddd; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.toolbar label { font-size: 13px; font-weight: bold; }
+.toolbar select, .toolbar input[type="date"] { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+.preset-btn { padding: 3px 10px; font-size: 12px; cursor: pointer; border: 1px solid #ccc; border-radius: 3px; background: #f9f9f9; }
+.preset-btn:hover { background: #eee; }
+.preset-btn.active { background: #c0392b; color: #fff; border-color: #c0392b; }
+
+.tabs { display: flex; background: #fff; border-bottom: 2px solid #c0392b; padding: 0 20px; }
+.tab { padding: 10px 20px; cursor: pointer; font-size: 14px; border-bottom: 3px solid transparent; margin-bottom: -2px; }
+.tab:hover { background: #fef0ef; }
+.tab.active { border-bottom-color: #c0392b; font-weight: bold; color: #c0392b; }
+
+.tab-toolbar { background: #fafafa; padding: 8px 20px; border-bottom: 1px solid #eee; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 13px; }
+.tab-toolbar label { font-weight: bold; }
+
+.model-search-wrap { position: relative; display: inline-block; }
+.model-search { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; width: 220px; }
+.model-candidates { display: none; position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid #ccc; border-radius: 0 0 4px 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; max-height: 250px; overflow-y: auto; min-width: 300px; }
+.model-candidates.open { display: block; }
+.model-candidate { padding: 5px 10px; cursor: pointer; font-size: 12px; }
+.model-candidate:hover { background: #fef0ef; }
+.model-candidate.selected { background: #e8f5e9; }
+
+.model-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 4px 20px; background: #fafafa; border-bottom: 1px solid #eee; }
+.model-tag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; background: #e8e8e8; border-radius: 12px; font-size: 11px; }
+.model-tag .remove { cursor: pointer; font-weight: bold; color: #999; margin-left: 2px; }
+.model-tag .remove:hover { color: #c0392b; }
+.model-count { font-size: 12px; color: #888; }
+.diff-limit-msg { font-size: 12px; color: #c0392b; margin-left: 8px; }
+
+.content { padding: 20px; }
+.chart-container { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+canvas { max-height: 500px; }
+
+/* 差枚推移 2x2 グリッド */
+.diff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.diff-grid.single { grid-template-columns: 1fr; }
+.diff-cell { background: #fff; border-radius: 8px; padding: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+.diff-cell h3 { font-size: 14px; margin-bottom: 8px; color: #333; }
+.diff-cell canvas { max-height: 350px; }
+
+.summary-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+.summary-table th, .summary-table td { padding: 6px 12px; border: 1px solid #ddd; text-align: right; }
+.summary-table th { background: #c0392b; color: #fff; }
+.summary-table tr:nth-child(even) { background: #f9f9f9; }
+.summary-table td:first-child { text-align: center; }
+.positive { color: #27ae60; }
+.negative { color: #e74c3c; }
+
+.loading { text-align: center; padding: 60px; font-size: 16px; color: #999; }
+.header .actions { display: flex; align-items: center; gap: 10px; }
+.reload-btn { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.4); border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.reload-btn:hover { background: rgba(255,255,255,0.3); }
+.busy { position: fixed; top: 0; left: 0; right: 0; padding: 6px 12px; background: #34495e; color: #fff; font-size: 12px; text-align: center; z-index: 999; display: none; }
+.busy.on { display: block; }
+.err { background: #fdecea; border: 1px solid #f5c6cb; color: #a33; padding: 10px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; display: none; }
+.err.on { display: block; }
+
+@media (max-width: 720px) {
+  body { font-size: 14px; }
+
+  .header {
+    padding: 10px 12px;
+    display: block;
+  }
+  .header h1 {
+    font-size: 16px;
+    line-height: 1.35;
+    margin-bottom: 4px;
+  }
+  .header .info {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .toolbar,
+  .tab-toolbar {
+    padding: 10px 12px;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .toolbar label,
+  .tab-toolbar label {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+  }
+  .toolbar select,
+  .toolbar input[type="date"],
+  .model-search {
+    width: 100%;
+    min-height: 40px;
+    font-size: 16px;
+  }
+  .preset-btn {
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  .tabs {
+    padding: 0 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+  .tab {
+    flex: 0 0 auto;
+    padding: 11px 12px;
+    font-size: 13px;
+  }
+
+  .model-search-wrap {
+    width: 100%;
+  }
+  .model-candidates {
+    min-width: 100%;
+    max-width: calc(100vw - 24px);
+  }
+  .model-tags {
+    padding: 8px 12px;
+    max-height: 112px;
+    overflow-y: auto;
+  }
+  .model-tag {
+    min-height: 28px;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  .content {
+    padding: 12px;
+  }
+  .chart-container,
+  .diff-cell {
+    border-radius: 6px;
+    padding: 10px;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+  }
+  canvas {
+    max-height: 380px;
+  }
+  .diff-grid,
+  .diff-grid.single {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .diff-cell canvas {
+    max-height: 300px;
+  }
+
+  .summary-table {
+    min-width: 460px;
+    font-size: 12px;
+  }
+  .summary-table th,
+  .summary-table td {
+    padding: 6px 8px;
+  }
+  #summaryArea,
+  #diffArea {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .loading {
+    padding: 40px 12px;
+    font-size: 14px;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="busy" id="busy">読み込み中…</div>
+
+<div class="header">
+  <h1 id="title">スロットデータ ビューア</h1>
+  <div class="actions">
+    <div class="info" id="headerInfo"></div>
+    <button class="reload-btn" id="reloadBtn" title="最新データを取り込む">🔄 更新</button>
+  </div>
+</div>
+
+<div class="toolbar">
+  <label>店舗:</label>
+  <select id="storeSelect"></select>
+  <label>期間:</label>
+  <button class="preset-btn" data-preset="1w">1週間</button>
+  <button class="preset-btn" data-preset="1m">1ヶ月</button>
+  <button class="preset-btn" data-preset="3m">3ヶ月</button>
+  <button class="preset-btn" data-preset="all">全期間</button>
+  <input type="date" id="dateFrom">
+  <span>〜</span>
+  <input type="date" id="dateTo">
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="summary">日別サマリー</div>
+  <div class="tab" data-tab="stats">出玉統計</div>
+  <div class="tab" data-tab="diff">差枚推移</div>
+  <div class="tab" data-tab="machine">機種別データ</div>
+  <div class="tab" data-tab="count">設置台数</div>
+</div>
+
+<div class="tab-toolbar" id="tabToolbar" style="display:none;">
+  <label><input type="checkbox" id="activeOnly" checked> 稼働台のみ</label>
+  <span style="color:#999; font-size:11px;">（期間末日にデータがある機種）</span>
+  <span style="margin: 0 6px; color:#ddd;">|</span>
+  <label>機種検索:</label>
+  <div class="model-search-wrap">
+    <input type="text" class="model-search" id="modelSearch" placeholder="機種名を入力...">
+    <div class="model-candidates" id="modelCandidates"></div>
+  </div>
+  <button class="preset-btn" onclick="clearModelSelection()">選択クリア</button>
+  <button class="preset-btn" onclick="selectAllActiveModels()">稼働台全選択</button>
+  <span id="machineScaleToggle" style="display:none;">
+    <span style="margin: 0 6px; color:#ddd;">|</span>
+    <label><input type="checkbox" id="unifyScale"> 縦軸を統一</label>
+  </span>
+</div>
+<div class="model-tags" id="modelTagsArea" style="display:none;">
+  <span id="modelTags"></span>
+</div>
+
+<div class="content">
+  <div class="err" id="err"></div>
+  <div class="loading" id="loading">データを読み込み中...</div>
+  <div id="chartArea" style="display:none;">
+    <!-- 差枚推移以外で使うメインチャート -->
+    <div class="chart-container" id="mainChartWrap">
+      <canvas id="mainChart"></canvas>
+      <div id="tableArea"></div>
+    </div>
+    <!-- 差枚推移用グリッド -->
+    <div id="diffArea" style="display:none;"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+//  State
+// ═══════════════════════════════════════
+const DATA_ROOT = './data';
+
+let ROOT = null;          // data/index.json
+let STORE = null;         // data/<id>/index.json（選択中の店舗）
+let SUMMARY = [];         // STORE.daily を扱いやすい形に変換したもの
+let ROWS = [];            // 読み込み済みの月の台別データ（選択中の店舗ぶんのみ）
+const storeIndexCache = new Map();  // id        -> store index
+const monthCache = new Map();       // id/YYYY-MM -> 行の配列
+
+let mainChart = null;
+let diffCharts = [];
+let activeTab = 'summary';
+let selectedModels = new Set();
+let savedModels = new Set();
+let currentStore = '';
+let allModelsForStore = [];
+let activeModelsSet = new Set();
+
+const COLORS = [
+  '#e6194b','#3cb44b','#4363d8','#f58231','#911eb4',
+  '#42d4f4','#f032e6','#bfef45','#fabebe','#469990',
+  '#e6beff','#9A6324','#800000','#aaffc3','#808000',
+  '#000075','#a9a9a9','#ffe119','#dcbeff','#00a86b',
+  '#ff6f61','#17becf','#bcbd22','#7f7f7f','#1f77b4',
+];
+function getColor(i) { return COLORS[i % COLORS.length]; }
+
+// ═══════════════════════════════════════
+//  Data Loading（店舗別 × 月別の分割JSONを必要なぶんだけ取得する）
+// ═══════════════════════════════════════
+let busyDepth = 0;
+function setBusy(on, msg) {
+  busyDepth = Math.max(0, busyDepth + (on ? 1 : -1));
+  const el = document.getElementById('busy');
+  if (msg) el.textContent = msg;
+  el.classList.toggle('on', busyDepth > 0);
+}
+
+function showError(msg) {
+  const el = document.getElementById('err');
+  el.textContent = msg;
+  el.classList.toggle('on', !!msg);
+}
+
+async function fetchJson(path, bust) {
+  const url = `${DATA_ROOT}/${path}?v=${encodeURIComponent(bust)}`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`${path} を取得できません (HTTP ${resp.status})`);
+  return resp.json();
+}
+
+async function loadRoot() {
+  ROOT = await fetchJson('index.json', Date.now());
+  if (!ROOT.stores || !ROOT.stores.length) throw new Error('データがまだありません。');
+}
+
+async function loadStoreIndex(id) {
+  if (!storeIndexCache.has(id)) {
+    storeIndexCache.set(id, await fetchJson(`${id}/index.json`, ROOT.exported_at));
+  }
+  const s = storeIndexCache.get(id);
+  SUMMARY = s.daily.map(([date, total_diff, avg_payout, machine_count]) =>
+    ({ date, total_diff, avg_payout, machine_count }));
+  return s;
+}
+
+async function loadMonth(id, month) {
+  const key = `${id}/${month}`;
+  if (!monthCache.has(key)) {
+    const m = await fetchJson(`${id}/${month}.json`, ROOT.exported_at);
+    monthCache.set(key, m.rows.map(([di, mi, machine_no, diff_medals, game_count, payout_rate]) =>
+      ({ date: m.dates[di], model: m.models[mi], machine_no, diff_medals, game_count, payout_rate })));
+  }
+  return monthCache.get(key);
+}
+
+/** 現在の期間指定に必要な月をすべて読み込み、ROWS を組み立てる */
+async function ensureRange() {
+  if (!STORE) { ROWS = []; return; }
+  const { from, to } = getDateRange();
+  const need = STORE.months.filter(m => (!to || m <= to.slice(0, 7)) && (!from || m >= from.slice(0, 7)));
+  const missing = need.filter(m => !monthCache.has(`${STORE.id}/${m}`));
+
+  if (missing.length) {
+    setBusy(true, `データ読み込み中… (${missing.length}ヶ月分)`);
+    try {
+      // 同時接続を絞りつつ取得
+      for (let i = 0; i < missing.length; i += 4) {
+        await Promise.all(missing.slice(i, i + 4).map(m => loadMonth(STORE.id, m)));
+      }
+      showError('');
+    } catch (e) {
+      showError('エラー: ' + e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  ROWS = need.flatMap(m => monthCache.get(`${STORE.id}/${m}`) || []);
+}
+
+/** データを読み直してから再描画する */
+async function refresh() {
+  await ensureRange();
+  render();
+}
+
+async function loadData() {
+  try {
+    await loadRoot();
+    initApp();
+  } catch (e) {
+    document.getElementById('loading').textContent = 'エラー: ' + e.message
+      + '\n（オフラインの場合はネットワーク接続を確認してください）';
+  }
+}
+
+async function reloadAll() {
+  setBusy(true, '最新データを確認中…');
+  try {
+    storeIndexCache.clear();
+    monthCache.clear();
+    await loadRoot();
+    STORE = await loadStoreIndex(currentStore);
+    showError('');
+    await refresh();
+  } catch (e) {
+    showError('更新に失敗しました: ' + e.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ═══════════════════════════════════════
+//  Init
+// ═══════════════════════════════════════
+function initApp() {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('chartArea').style.display = 'block';
+
+  const sel = document.getElementById('storeSelect');
+  ROOT.stores.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+  currentStore = ROOT.stores[0].id;
+  sel.addEventListener('change', () => { currentStore = sel.value; onStoreChange(); });
+  document.getElementById('reloadBtn').addEventListener('click', reloadAll);
+
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      const prevTab = activeTab;
+      document.querySelector('.tab.active').classList.remove('active');
+      t.classList.add('active');
+      activeTab = t.dataset.tab;
+      // 機種別データタブに入るときは選択クリア、出るときは復元
+      if (activeTab === 'machine' && prevTab !== 'machine') {
+        savedModels = new Set(selectedModels);
+        selectedModels.clear();
+      } else if (activeTab !== 'machine' && prevTab === 'machine') {
+        selectedModels = new Set(savedModels);
+      }
+      updateTabToolbar();
+      render();
+    });
+  });
+
+  document.getElementById('dateFrom').addEventListener('change', () => { clearPresetBtns(); refresh(); });
+  document.getElementById('dateTo').addEventListener('change', () => { clearPresetBtns(); refresh(); });
+
+  document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+  });
+
+  document.getElementById('activeOnly').addEventListener('change', () => {
+    applyActiveFilter();
+    render();
+  });
+
+  document.getElementById('unifyScale').addEventListener('change', () => render());
+
+  initModelSearch();
+  onStoreChange();
+}
+
+// ═══════════════════════════════════════
+//  Period Presets
+// ═══════════════════════════════════════
+/** 期間の入力欄だけを更新する（描画はしない） */
+function setPresetDates(preset) {
+  const dates = STORE ? STORE.dates : [];
+  if (!dates.length) return false;
+  const lastDate = dates[dates.length - 1];
+  let fromDate;
+  if (preset === 'all') { fromDate = dates[0]; }
+  else {
+    const d = new Date(lastDate);
+    if (preset === '1w') d.setDate(d.getDate() - 7);
+    else if (preset === '1m') d.setMonth(d.getMonth() - 1);
+    else if (preset === '3m') d.setMonth(d.getMonth() - 3);
+    fromDate = d.toISOString().slice(0, 10);
+  }
+  document.getElementById('dateFrom').value = fromDate;
+  document.getElementById('dateTo').value = lastDate;
+  document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.preset-btn[data-preset="${preset}"]`).classList.add('active');
+  return true;
+}
+
+async function applyPreset(preset) {
+  if (setPresetDates(preset)) await refresh();
+}
+
+function clearPresetBtns() {
+  document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+}
+
+// ═══════════════════════════════════════
+//  Store Change (リセットあり) / Date Change (リセットなし)
+// ═══════════════════════════════════════
+async function onStoreChange() {
+  setBusy(true, '店舗データを読み込み中…');
+  try {
+    STORE = await loadStoreIndex(currentStore);
+    showError('');
+  } catch (e) {
+    showError('エラー: ' + e.message);
+    setBusy(false);
+    return;
+  }
+  setBusy(false);
+
+  document.getElementById('title').textContent = STORE.name + ' データビューア';
+  const dates = STORE.dates;
+  allModelsForStore = STORE.models.slice();
+
+  document.getElementById('headerInfo').textContent =
+    dates.length > 0
+      ? `${dates[0]} 〜 ${dates[dates.length-1]} | ${dates.length}日 | ${allModelsForStore.length}機種`
+      : 'データなし';
+
+  // 初回のみ期間プリセット設定、店舗切替時は期間維持
+  if (!document.getElementById('dateFrom').value) {
+    setPresetDates('1m');
+  }
+  await ensureRange();
+  computeActiveModels();
+  applyActiveFilter();
+  updateTabToolbar();
+  render();
+}
+
+// ═══════════════════════════════════════
+//  Active Models
+// ═══════════════════════════════════════
+function computeActiveModels() {
+  const { from, to } = getDateRange();
+  activeModelsSet.clear();
+  // 期間末日にデータがある機種
+  ROWS.forEach(r => { if (r.date === to) activeModelsSet.add(r.model); });
+  if (activeModelsSet.size === 0) {
+    const datesInRange = [...new Set(
+      ROWS.filter(r => r.date >= from && r.date <= to).map(r => r.date)
+    )].sort();
+    if (datesInRange.length) {
+      const last = datesInRange[datesInRange.length - 1];
+      ROWS.forEach(r => { if (r.date === last) activeModelsSet.add(r.model); });
+    }
+  }
+}
+
+function applyActiveFilter() {
+  if (activeTab === 'machine') {
+    // 機種別データタブでは選択クリア状態を維持、savedModels側を更新
+    const activeOnly = document.getElementById('activeOnly').checked;
+    savedModels.clear();
+    (activeOnly ? [...activeModelsSet] : allModelsForStore).forEach(m => savedModels.add(m));
+    selectedModels.clear();
+  } else {
+    const activeOnly = document.getElementById('activeOnly').checked;
+    selectedModels.clear();
+    (activeOnly ? [...activeModelsSet] : allModelsForStore).forEach(m => selectedModels.add(m));
+  }
+  updateModelTags();
+}
+
+function selectAllActiveModels() {
+  document.getElementById('activeOnly').checked = true;
+  computeActiveModels();
+  applyActiveFilter();
+  render();
+}
+
+function clearModelSelection() {
+  selectedModels.clear();
+  updateModelTags();
+  render();
+}
+
+// ═══════════════════════════════════════
+//  Model Search
+// ═══════════════════════════════════════
+function initModelSearch() {
+  const input = document.getElementById('modelSearch');
+  const panel = document.getElementById('modelCandidates');
+  input.addEventListener('focus', () => updateCandidates());
+  input.addEventListener('input', () => updateCandidates());
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { panel.classList.remove('open'); input.blur(); } });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.model-search-wrap')) panel.classList.remove('open'); });
+}
+
+function updateCandidates() {
+  const input = document.getElementById('modelSearch');
+  const panel = document.getElementById('modelCandidates');
+  const query = input.value.trim().toLowerCase();
+  const activeOnly = document.getElementById('activeOnly').checked;
+  const pool = activeOnly ? [...activeModelsSet].sort() : allModelsForStore;
+  const filtered = query ? pool.filter(m => m.toLowerCase().includes(query)) : pool;
+
+  const MAX_MODELS = (activeTab === 'diff') ? 4 : 999;
+
+  if (!filtered.length) {
+    panel.innerHTML = '<div style="padding:8px;color:#999;font-size:12px;">該当なし</div>';
+  } else {
+    panel.innerHTML = filtered.map(m => {
+      const sel = selectedModels.has(m) ? 'selected' : '';
+      const disabled = (!selectedModels.has(m) && selectedModels.size >= MAX_MODELS && activeTab === 'diff');
+      return `<div class="model-candidate ${sel}" data-model="${m}" style="${disabled ? 'opacity:0.4;pointer-events:none;' : ''}">${selectedModels.has(m) ? '✓ ' : ''}${m}</div>`;
+    }).join('');
+    panel.querySelectorAll('.model-candidate').forEach(el => {
+      el.addEventListener('click', () => {
+        const model = el.dataset.model;
+        if (selectedModels.has(model)) selectedModels.delete(model);
+        else if (activeTab !== 'diff' || selectedModels.size < MAX_MODELS) selectedModels.add(model);
+        updateCandidates();
+        updateModelTags();
+        render();
+      });
+    });
+  }
+  panel.classList.add('open');
+}
+
+// ═══════════════════════════════════════
+//  Model Tags
+// ═══════════════════════════════════════
+function updateModelTags() {
+  const container = document.getElementById('modelTags');
+  const area = document.getElementById('modelTagsArea');
+  if (activeTab === 'summary') { area.style.display = 'none'; return; }
+  area.style.display = '';
+
+  if (selectedModels.size === 0) { container.innerHTML = '<span class="model-count">機種未選択</span>'; return; }
+
+  const MAX_SHOW = 15;
+  const models = [...selectedModels].sort();
+  let html = '';
+  models.slice(0, MAX_SHOW).forEach(m => {
+    html += `<span class="model-tag">${m}<span class="remove" data-model="${m}">×</span></span>`;
+  });
+  if (models.length > MAX_SHOW) html += `<span class="model-count">…他${models.length - MAX_SHOW}機種 (計${models.length})</span>`;
+  else html += `<span class="model-count">(${models.length}機種)</span>`;
+
+  if (activeTab === 'diff' && models.length >= 4) html += '<span class="diff-limit-msg">※差枚推移は最大4機種</span>';
+
+  container.innerHTML = html;
+  container.querySelectorAll('.remove').forEach(el => {
+    el.addEventListener('click', () => { selectedModels.delete(el.dataset.model); updateModelTags(); render(); });
+  });
+}
+
+// ═══════════════════════════════════════
+//  Tab Toolbar
+// ═══════════════════════════════════════
+function updateTabToolbar() {
+  const toolbar = document.getElementById('tabToolbar');
+  const tagsArea = document.getElementById('modelTagsArea');
+  const needs = (activeTab === 'diff' || activeTab === 'machine' || activeTab === 'count');
+  toolbar.style.display = needs ? '' : 'none';
+  tagsArea.style.display = needs ? '' : 'none';
+  document.getElementById('machineScaleToggle').style.display = (activeTab === 'machine') ? '' : 'none';
+  if (needs) updateModelTags();
+}
+
+// ═══════════════════════════════════════
+//  Filtering
+// ═══════════════════════════════════════
+function getDateRange() {
+  return { from: document.getElementById('dateFrom').value, to: document.getElementById('dateTo').value };
+}
+
+/** 期間内の台別データ（選択中の店舗ぶん） */
+function rowsInRange() {
+  const { from, to } = getDateRange();
+  return ROWS.filter(r => r.date >= from && r.date <= to);
+}
+
+function filteredData() {
+  return rowsInRange().filter(r => selectedModels.has(r.model));
+}
+
+function filteredSummary() {
+  const { from, to } = getDateRange();
+  return SUMMARY.filter(r => r.date >= from && r.date <= to);
+}
+
+function storeDates() {
+  const { from, to } = getDateRange();
+  return (STORE ? STORE.dates : []).filter(d => d >= from && d <= to);
+}
+
+// ═══════════════════════════════════════
+//  Render Dispatch
+// ═══════════════════════════════════════
+function render() {
+  if (!STORE) return;
+  destroyCharts();
+
+  const mainWrap = document.getElementById('mainChartWrap');
+  const diffArea = document.getElementById('diffArea');
+  document.getElementById('tableArea').innerHTML = '';
+
+  if (activeTab === 'diff' || activeTab === 'machine' || activeTab === 'stats') {
+    mainWrap.style.display = 'none';
+    diffArea.style.display = '';
+    if (activeTab === 'diff') DiffTab.render();
+    else if (activeTab === 'stats') StatsTab.render();
+    else MachineTab.render();
+  } else {
+    mainWrap.style.display = '';
+    diffArea.style.display = 'none';
+    document.getElementById('mainChart').style.maxHeight = '500px';
+    if (activeTab === 'summary') SummaryTab.render();
+    else if (activeTab === 'count') CountTab.render();
+  }
+}
+
+function destroyCharts() {
+  if (mainChart) { mainChart.destroy(); mainChart = null; }
+  diffCharts.forEach(c => c.destroy());
+  diffCharts = [];
+}
+
+// ═══════════════════════════════════════
+//  Tab 1: 日別サマリー
+// ═══════════════════════════════════════
+const SummaryTab = {
+  render() {
+    const data = filteredSummary();
+    const labels = data.map(r => r.date);
+    mainChart = new Chart(document.getElementById('mainChart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: '総差枚',
+          data: data.map(r => r.total_diff),
+          backgroundColor: data.map(r => r.total_diff >= 0 ? 'rgba(46,204,113,0.7)' : 'rgba(231,76,60,0.7)'),
+        }]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'top' } },
+        scales: { y: { title: { display: true, text: '総差枚' } } }
+      }
+    });
+    let html = '<table class="summary-table"><tr><th>日付</th><th>台数</th><th>総差枚</th></tr>';
+    data.forEach(r => {
+      const cls = (r.total_diff >= 0) ? 'positive' : 'negative';
+      html += `<tr><td>${r.date}</td><td>${r.machine_count}</td><td class="${cls}">${r.total_diff != null ? r.total_diff.toLocaleString() : '-'}</td></tr>`;
+    });
+    html += '</table>';
+    document.getElementById('tableArea').innerHTML = html;
+  }
+};
+
+// ═══════════════════════════════════════
+//  Tab: 出玉統計（日付別 / 曜日別の平均出玉）
+// ═══════════════════════════════════════
+const StatsTab = {
+  render() {
+    const diffArea = document.getElementById('diffArea');
+    diffArea.innerHTML = '';
+    diffArea.className = 'diff-grid';
+
+    const data = filteredSummary();
+    if (data.length === 0) {
+      diffArea.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">データがありません</div>';
+      return;
+    }
+
+    // --- 日付別 (1〜31日) 平均出玉(総差枚) ---
+    const domSum = Array(32).fill(0), domCnt = Array(32).fill(0);
+    // --- 曜日別 (0=日 .. 6=土) ---
+    const dowSum = Array(7).fill(0), dowCnt = Array(7).fill(0);
+    const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
+
+    data.forEach(r => {
+      if (r.total_diff == null) return;
+      const [y, m, d] = r.date.split('-').map(Number);
+      domSum[d] += r.total_diff; domCnt[d]++;
+      const w = new Date(y, m - 1, d).getDay();
+      dowSum[w] += r.total_diff; dowCnt[w]++;
+    });
+
+    const dayLabels = [], dayVals = [];
+    for (let d = 1; d <= 31; d++) {
+      dayLabels.push(d + '日');
+      dayVals.push(domCnt[d] ? Math.round(domSum[d] / domCnt[d]) : null);
+    }
+    const dowLabels = WEEK.map(w => w + '曜');
+    const dowVals = WEEK.map((_, w) => dowCnt[w] ? Math.round(dowSum[w] / dowCnt[w]) : null);
+
+    const barColor = v => v == null ? 'transparent' : (v >= 0 ? 'rgba(46,204,113,0.7)' : 'rgba(231,76,60,0.7)');
+    const barBorder = v => v == null ? 'transparent' : (v >= 0 ? '#27ae60' : '#e74c3c');
+
+    const makeOpts = () => ({
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => c.raw == null ? 'データなし' : c.raw.toLocaleString() + ' 枚' } }
+      },
+      scales: {
+        y: { title: { display: true, text: '平均総差枚 (枚)' }, grid: { color: c => c.tick.value === 0 ? '#888' : '#eee' } },
+        x: { grid: { display: false } }
+      }
+    });
+
+    const buildCell = (title, labels, vals) => {
+      const cell = document.createElement('div');
+      cell.className = 'diff-cell';
+      const h3 = document.createElement('h3');
+      h3.textContent = title;
+      cell.appendChild(h3);
+      const canvas = document.createElement('canvas');
+      cell.appendChild(canvas);
+      diffArea.appendChild(cell);
+      const c = new Chart(canvas, {
+        type: 'bar',
+        data: { labels, datasets: [{ data: vals, backgroundColor: vals.map(barColor), borderColor: vals.map(barBorder), borderWidth: 1 }] },
+        options: makeOpts()
+      });
+      diffCharts.push(c);
+    };
+
+    buildCell('日付別 平均出玉（1〜31日）', dayLabels, dayVals);
+    buildCell('曜日別 平均出玉（日〜土）', dowLabels, dowVals);
+  }
+};
+
+// ═══════════════════════════════════════
+//  Tab 2: 差枚推移（機種別 最大4チャート）
+// ═══════════════════════════════════════
+const DiffTab = {
+  render() {
+    const diffArea = document.getElementById('diffArea');
+    diffArea.innerHTML = '';
+
+    const { from, to } = getDateRange();
+    const dates = storeDates();
+    const models = [...selectedModels].sort().slice(0, 4);
+
+    if (models.length === 0) {
+      diffArea.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">機種を選択してください</div>';
+      return;
+    }
+
+    // 期間内データ（選択機種分）
+    const storeData = rowsInRange();
+
+    diffArea.className = 'diff-grid' + (models.length === 1 ? ' single' : '');
+
+    models.forEach((model, idx) => {
+      const cell = document.createElement('div');
+      cell.className = 'diff-cell';
+      const h3 = document.createElement('h3');
+      h3.textContent = model;
+      cell.appendChild(h3);
+      const canvas = document.createElement('canvas');
+      cell.appendChild(canvas);
+      diffArea.appendChild(cell);
+
+      // この機種のデータ集計
+      const modelData = storeData.filter(r => r.model === model);
+      const dayMap = {};
+      modelData.forEach(r => {
+        if (!dayMap[r.date]) dayMap[r.date] = { sum: 0, cnt: 0, plus: 0 };
+        dayMap[r.date].sum += (r.diff_medals || 0);
+        dayMap[r.date].cnt++;
+        if ((r.diff_medals || 0) > 0) dayMap[r.date].plus++;
+      });
+
+      const avgDiffs = dates.map(d => dayMap[d] ? Math.round(dayMap[d].sum / dayMap[d].cnt) : null);
+      const plusRates = dates.map(d => {
+        if (!dayMap[d] || dayMap[d].cnt === 0) return null;
+        return Math.round(dayMap[d].plus / dayMap[d].cnt * 100);
+      });
+
+      const c = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels: dates,
+          datasets: [
+            {
+              label: '平均差枚',
+              data: avgDiffs,
+              backgroundColor: avgDiffs.map(v => v == null ? 'transparent' : (v >= 0 ? 'rgba(46,204,113,0.7)' : 'rgba(231,76,60,0.7)')),
+              borderColor: avgDiffs.map(v => v == null ? 'transparent' : (v >= 0 ? '#27ae60' : '#e74c3c')),
+              borderWidth: 1,
+              yAxisID: 'y',
+              order: 2,
+            },
+            {
+              label: 'プラス台率 (%)',
+              data: plusRates,
+              type: 'line',
+              borderColor: '#3498db',
+              backgroundColor: 'rgba(52,152,219,0.1)',
+              pointRadius: 3,
+              tension: 0.3,
+              yAxisID: 'y1',
+              order: 1,
+              spanGaps: true,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top', labels: { font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                afterBody: (items) => {
+                  const d = items[0]?.label;
+                  if (d && dayMap[d]) {
+                    return `台数: ${dayMap[d].cnt}  プラス: ${dayMap[d].plus}台`;
+                  }
+                  return '';
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              position: 'left',
+              title: { display: true, text: '平均差枚' },
+            },
+            y1: {
+              position: 'right',
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'プラス台率 (%)' },
+              min: 0, max: 100,
+            }
+          }
+        }
+      });
+      diffCharts.push(c);
+    });
+  }
+};
+
+// ═══════════════════════════════════════
+//  Tab 3: 機種別データ（台ごとのグラフ）
+// ═══════════════════════════════════════
+const MachineTab = {
+  render() {
+    const diffArea = document.getElementById('diffArea');
+    diffArea.innerHTML = '';
+
+    const models = [...selectedModels].sort();
+    if (models.length === 0) {
+      diffArea.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">機種を選択してください</div>';
+      return;
+    }
+
+    const { from, to } = getDateRange();
+    const dates = storeDates();
+    const unify = document.getElementById('unifyScale').checked;
+    const storeData = rowsInRange();
+
+    // 全台のデータを先に集めて統一スケール用のmin/maxを計算
+    const allChartData = []; // [{no, diffs[], games[], model}]
+    models.forEach(model => {
+      const modelData = storeData.filter(r => r.model === model);
+      const machineNos = [...new Set(modelData.map(r => r.machine_no))].sort((a, b) => a - b);
+      machineNos.forEach(no => {
+        const machData = {};
+        modelData.filter(r => r.machine_no === no).forEach(r => {
+          machData[r.date] = { diff: r.diff_medals, game: r.game_count };
+        });
+        const diffs = dates.map(d => machData[d] ? machData[d].diff : null);
+        const games = dates.map(d => machData[d] ? machData[d].game : null);
+        allChartData.push({ no, diffs, games, model });
+      });
+    });
+
+    // 統一スケール計算
+    let gameMax = null, diffMin = null, diffMax = null;
+    if (unify && allChartData.length > 1) {
+      allChartData.forEach(({ diffs, games }) => {
+        games.forEach(v => { if (v != null) gameMax = Math.max(gameMax || 0, v); });
+        diffs.forEach(v => {
+          if (v != null) {
+            diffMin = Math.min(diffMin ?? v, v);
+            diffMax = Math.max(diffMax ?? v, v);
+          }
+        });
+      });
+    }
+
+    // 機種ごとにセクション描画
+    let chartIdx = 0;
+    models.forEach(model => {
+      const items = allChartData.filter(d => d.model === model);
+      if (items.length === 0) return;
+
+      const header = document.createElement('h3');
+      header.textContent = `${model}（${items.length}台）`;
+      header.style.cssText = 'margin: 16px 0 8px; font-size: 16px; color: #333;';
+      if (diffArea.children.length > 0) header.style.marginTop = '32px';
+      diffArea.appendChild(header);
+
+      const grid = document.createElement('div');
+      grid.className = 'diff-grid' + (items.length === 1 ? ' single' : '');
+      diffArea.appendChild(grid);
+
+      items.forEach(({ no, diffs, games }) => {
+        const cell = document.createElement('div');
+        cell.className = 'diff-cell';
+        const h3 = document.createElement('h3');
+        h3.textContent = '台番号 ' + no;
+        cell.appendChild(h3);
+        const canvas = document.createElement('canvas');
+        cell.appendChild(canvas);
+        grid.appendChild(cell);
+
+        // ゲーム数の棒を差枚の+-で色分け
+        const barColors = diffs.map(v => v == null ? 'transparent' : (v >= 0 ? 'rgba(46,204,113,0.7)' : 'rgba(231,76,60,0.7)'));
+        const barBorders = diffs.map(v => v == null ? 'transparent' : (v >= 0 ? '#27ae60' : '#e74c3c'));
+
+        const yGameOpts = { position: 'left', title: { display: true, text: 'ゲーム数' }, beginAtZero: true };
+        const yDiffOpts = { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: '差枚' } };
+        if (unify && allChartData.length > 1) {
+          if (gameMax != null) yGameOpts.max = gameMax;
+          if (diffMin != null) yDiffOpts.min = diffMin;
+          if (diffMax != null) yDiffOpts.max = diffMax;
+        }
+
+        const c = new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: dates,
+            datasets: [
+              {
+                label: 'ゲーム数',
+                data: games,
+                backgroundColor: barColors,
+                borderColor: barBorders,
+                borderWidth: 1,
+                yAxisID: 'y',
+                order: 2,
+              },
+              {
+                label: '差枚',
+                data: diffs,
+                type: 'line',
+                borderColor: '#3498db',
+                backgroundColor: 'rgba(52,152,219,0.1)',
+                pointRadius: 3,
+                pointBackgroundColor: diffs.map(v => v == null ? 'transparent' : (v >= 0 ? '#27ae60' : '#e74c3c')),
+                tension: 0.3,
+                yAxisID: 'y1',
+                order: 1,
+                spanGaps: true,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { position: 'top', labels: { font: { size: 11 } } },
+              tooltip: {
+                callbacks: {
+                  label: ctx => {
+                    const v = ctx.parsed.y;
+                    if (v == null) return ctx.dataset.label + ': データなし';
+                    return ctx.dataset.label + ': ' + v.toLocaleString() + (ctx.datasetIndex === 0 ? 'G' : '枚');
+                  }
+                }
+              },
+              annotation: {
+                annotations: {
+                  zeroLine: {
+                    type: 'line',
+                    scaleID: 'y1',
+                    value: 0,
+                    borderColor: 'rgba(231,76,60,0.6)',
+                    borderWidth: 2,
+                    borderDash: [6, 3],
+                    label: { display: false }
+                  }
+                }
+              }
+            },
+            scales: { y: yGameOpts, y1: yDiffOpts }
+          }
+        });
+        diffCharts.push(c);
+      });
+    });
+  }
+};
+
+// ═══════════════════════════════════════
+//  Tab 4: 設置台数推移
+// ═══════════════════════════════════════
+const CountTab = {
+  render() {
+    const data = filteredData();
+    const dates = storeDates();
+    const map = {};
+    data.forEach(r => { const k = r.model + '|' + r.date; map[k] = (map[k] || 0) + 1; });
+    const models = [...selectedModels].sort();
+    const datasets = models.map((model, i) => ({
+      label: model,
+      data: dates.map(d => map[model + '|' + d] || 0),
+      borderColor: getColor(i),
+      backgroundColor: getColor(i) + '22',
+      tension: 0.3, pointRadius: 3, fill: false,
+    }));
+    mainChart = new Chart(document.getElementById('mainChart'), {
+      type: 'line',
+      data: { labels: dates, datasets },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+        scales: { y: { title: { display: true, text: '台数' }, beginAtZero: true } }
+      }
+    });
+  }
+};
+
+// ═══════════════════════════════════════
+loadData();
+</script>
+</body>
+</html>
